@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous Vehicle Simulation</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="logo">
+            <i class="fas fa-robot"></i>
+            <span>AVSim</span>
+        </div>
+        <ul class="nav-links">
+            <li><a href="#features">Features</a></li>
+            <li><a href="#algorithms">Algorithms</a></li>
+            <li><a href="#tech-stack">Tech Stack</a></li>
+            <li><a href="#about">About</a></li>
+        </ul>
+    </nav>
+
+    <header class="hero">
+        <div class="hero-content">
+            <h1>Autonomous Vehicle Simulation</h1>
+            <p>Experience the future of transportation through advanced pathfinding algorithms and real-time decision making</p>
+            <a href="http://localhost:5173" class="cta-button">Launch Simulation <i class="fas fa-rocket"></i></a>
+        </div>
+        <div class="hero-overlay"></div>
+    </header>
+
+    <section id="features" class="features">
+        <h2>Advanced Features</h2>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <i class="fas fa-brain"></i>
+                <h3>AI-Powered Navigation</h3>
+                <p>Advanced machine learning algorithms for real-time decision making and path optimization</p>
+            </div>
+            <div class="feature-card">
+                <i class="fas fa-traffic-light"></i>
+                <h3>Dynamic Traffic Simulation</h3>
+                <p>Realistic traffic patterns with intelligent vehicle interactions and pedestrian behavior</p>
+            </div>
+            <div class="feature-card">
+                <i class="fas fa-chart-network"></i>
+                <h3>Network Optimization</h3>
+                <p>Efficient route planning using graph theory and network flow algorithms</p>
+            </div>
+            <div class="feature-card">
+                <i class="fas fa-shield-alt"></i>
+                <h3>Safety Protocols</h3>
+                <p>Advanced collision detection and emergency response systems</p>
+            </div>
+            <div class="feature-card">
+                <i class="fas fa-database"></i>
+                <h3>Real-time Data Processing</h3>
+                <p>High-throughput data ingestion and processing for immediate insights.</p>
+            </div>
+            <div class="feature-card">
+                <i class="fas fa-wrench"></i>
+                <h3>Predictive Maintenance</h3>
+                <p>AI-driven analytics to predict vehicle component failures and schedule maintenance.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="algorithms" class="algorithms">
+        <h2>Core Algorithms</h2>
+        <div class="algorithm-grid">
+            <div class="algorithm-card">
+                <h3>Pathfinding Algorithms</h3>
+                <ul>
+                    <li><strong>Dijkstra's Algorithm:</strong> Finding shortest paths in weighted graphs</li>
+                    <li><strong>A* Search:</strong> Heuristic-based pathfinding with optimal efficiency</li>
+                    <li><strong>Bellman-Ford:</strong> Handling negative edge weights and detecting cycles</li>
+                    <li><strong>Floyd-Warshall:</strong> Computing shortest paths between all pairs of vertices</li>
+                </ul>
+            </div>
+            <div class="algorithm-card">
+                <h3>Optimization Techniques</h3>
+                <ul>
+                    <li><strong>Traveling Salesman Problem (TSP):</strong> Route optimization for multiple destinations</li>
+                    <li><strong>Dynamic Programming:</strong> Optimal substructure for complex routing decisions</li>
+                    <li><strong>Greedy Algorithms:</strong> Real-time decision making for immediate optimization</li>
+                    <li><strong>Genetic Algorithms:</strong> Evolutionary approach to route optimization</li>
+                </ul>
+            </div>
+            <div class="algorithm-card">
+                <h3>Machine Learning</h3>
+                <ul>
+                    <li><strong>Reinforcement Learning:</strong> Adaptive decision making in dynamic environments</li>
+                    <li><strong>Neural Networks:</strong> Pattern recognition for traffic prediction</li>
+                    <li><strong>Decision Trees:</strong> Rule-based navigation and collision avoidance</li>
+                    <li><strong>Clustering:</strong> Traffic pattern analysis and route optimization</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <section id="tech-stack" class="tech-stack">
+        <h2>Technology Stack</h2>
+        <div class="tech-grid">
+            <div class="tech-card">
+                <i class="fab fa-react"></i>
+                <h3>React</h3>
+                <p>Modern UI components and efficient state management</p>
+            </div>
+            <div class="tech-card">
+                <i class="fas fa-code"></i>
+                <h3>TypeScript</h3>
+                <p>Type-safe code and enhanced development experience</p>
+            </div>
+            <div class="tech-card">
+                <i class="fas fa-code-branch"></i>
+                <h3>Vite</h3>
+                <p>Lightning-fast development and optimized builds</p>
+            </div>
+            <div class="tech-card">
+                <i class="fas fa-paint-brush"></i>
+                <h3>Tailwind CSS</h3>
+                <p>Utility-first styling for responsive design</p>
+            </div>
+            <div class="tech-card">
+                <i class="fab fa-node-js"></i>
+                <h3>Node.js</h3>
+                <p>Robust backend environment for server-side logic and APIs.</p>
+            </div>
+            <div class="tech-card">
+                <i class="fas fa-cube"></i>
+                <h3>Webpack</h3>
+                <p>Module bundler for optimized asset delivery and performance.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="about" class="about">
+        <h2>About the Project</h2>
+        <div class="about-content">
+            <p>This autonomous vehicle simulation project demonstrates the practical application of advanced algorithms in real-world scenarios. By combining classical graph algorithms with modern machine learning techniques, we've created a comprehensive simulation that showcases the future of autonomous transportation.</p>
+            <div class="about-grid">
+                <div class="about-card">
+                    <h3>Algorithm Complexity</h3>
+                    <ul>
+                        <li>Dijkstra's: O((V + E)logV)</li>
+                        <li>Bellman-Ford: O(VE)</li>
+                        <li>Floyd-Warshall: O(V³)</li>
+                        <li>A* Search: O(b^d)</li>
+                    </ul>
+                </div>
+                <div class="about-card">
+                    <h3>Key Applications</h3>
+                    <ul>
+                        <li>Route Optimization</li>
+                        <li>Traffic Management</li>
+                        <li>Collision Avoidance</li>
+                        <li>Emergency Response</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h3>Contact</h3>
+                <p><i class="fas fa-envelope"></i> info@avsim.com</p>
+                <p><i class="fas fa-phone"></i> +1 (555) 123-4567</p>
+            </div>
+            <div class="footer-section">
+                <h3>Follow Us</h3>
+                <div class="social-links">
+                    <a href="#"><i class="fab fa-github"></i></a>
+                    <a href="#"><i class="fab fa-twitter"></i></a>
+                    <a href="#"><i class="fab fa-linkedin"></i></a>
+                </div>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2024 AVSim. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html> 
