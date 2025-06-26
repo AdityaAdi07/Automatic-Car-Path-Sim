@@ -7,6 +7,7 @@ import {
   LogEntry 
 } from '../types/simulation';
 import { PathfindingEngine, isInAnyStorageUnit } from './pathfinding';
+import { warehouseStorageUnits } from '../components/SimulationMap';
 
 export class SimulationEngine {
   private pathfinder: PathfindingEngine;
@@ -122,7 +123,7 @@ export class SimulationEngine {
 
     const pedestrianRadius = 8;
     const detectionDistance = pedestrianRadius * 10;
-    const stopDistance = 10;
+    const stopDistance = 8;
     const currentPos = vehicle.position;
     const nextPos = vehicle.route[vehicle.currentRouteIndex + 1];
     const direction = {
@@ -192,7 +193,7 @@ export class SimulationEngine {
     }
 
     const vehiclePos = vehicle.position;
-    const targetPos = vehicle.route[vehicle.currentRouteIndex + 1]; // Next waypoint
+    const targetPos = vehicle.route[vehicle.currentRouteIndex + 1];
     const trafficPos = trafficCondition.position;
 
     // Calculate direction vector from vehicle to target
@@ -448,6 +449,100 @@ export class SimulationEngine {
     return Math.sqrt(dist2(cp1, cp2));
   }
 
+  // Helper: find the nearest safe point at least minDist away from any storage unit, and as far as possible from the edge
+  private findNearestSafePoint(x: number, y: number, minDist: number = 8): { x: number, y: number } {
+    if (!isInAnyStorageUnit(x, y, minDist + 2)) return { x, y };
+    // Spiral search outwards, higher resolution
+    const maxRadius = 60;
+    let best = null;
+    let bestDist = -1;
+    for (let r = minDist + 2; r <= maxRadius; r += 1) {
+      for (let angle = 0; angle < 360; angle += 5) {
+        const rad = angle * Math.PI / 180;
+        const nx = x + r * Math.cos(rad);
+        const ny = y + r * Math.sin(rad);
+        if (nx >= 0 && nx < 800 && ny >= 0 && ny < 600 && !isInAnyStorageUnit(nx, ny, minDist + 2)) {
+          // Find the minimum distance to any storage unit edge
+          let minEdgeDist = Infinity;
+          for (const unit of warehouseStorageUnits) {
+            const dx = Math.max(unit.x - nx, 0, nx - (unit.x + unit.width));
+            const dy = Math.max(unit.y - ny, 0, ny - (unit.y + unit.height));
+            minEdgeDist = Math.min(minEdgeDist, Math.sqrt(dx * dx + dy * dy));
+          }
+          if (minEdgeDist > bestDist) {
+            bestDist = minEdgeDist;
+            best = { x: nx, y: ny };
+          }
+        }
+      }
+    }
+    // Fallback: just return the best found, or original
+    return best || { x, y };
+  }
+
+  // Helper: generate a detour path around the nearest storage unit boundary
+  private detourAroundStorageUnit(from: Position, to: Position, minDist: number = 8): Position[] {
+    // Find the nearest storage unit the segment crosses
+    let nearestUnit = null;
+    let minDistToUnit = Infinity;
+    for (const unit of warehouseStorageUnits) {
+      // Check if the segment crosses this unit
+      const unitRect = {
+        x: unit.x - minDist,
+        y: unit.y - minDist,
+        width: unit.width + 2 * minDist,
+        height: unit.height + 2 * minDist
+      };
+      // Simple AABB check for intersection
+      const crosses = (
+        Math.min(from.x, to.x) <= unitRect.x + unitRect.width &&
+        Math.max(from.x, to.x) >= unitRect.x &&
+        Math.min(from.y, to.y) <= unitRect.y + unitRect.height &&
+        Math.max(from.y, to.y) >= unitRect.y
+      );
+      if (crosses) {
+        // Use center of the unit for distance
+        const center = { x: unit.x + unit.width / 2, y: unit.y + unit.height / 2 };
+        const dist = Math.min(this.getDistance(from, center), this.getDistance(to, center));
+        if (dist < minDistToUnit) {
+          minDistToUnit = dist;
+          nearestUnit = unitRect;
+        }
+      }
+    }
+    if (!nearestUnit) return [];
+    // Find the closest entry and exit points on the boundary
+    const corners = [
+      { x: nearestUnit.x, y: nearestUnit.y },
+      { x: nearestUnit.x + nearestUnit.width, y: nearestUnit.y },
+      { x: nearestUnit.x + nearestUnit.width, y: nearestUnit.y + nearestUnit.height },
+      { x: nearestUnit.x, y: nearestUnit.y + nearestUnit.height }
+    ];
+    // Find the closest corner to 'from' and to 'to'
+    let entry = corners[0], exit = corners[0], minEntry = Infinity, minExit = Infinity;
+    for (const c of corners) {
+      const dEntry = this.getDistance(from, c);
+      const dExit = this.getDistance(to, c);
+      if (dEntry < minEntry) { minEntry = dEntry; entry = c; }
+      if (dExit < minExit) { minExit = dExit; exit = c; }
+    }
+    // Go from 'from' to entry, then around the boundary to exit, then to 'to'
+    // Choose the shorter direction (clockwise or counterclockwise)
+    const entryIdx = corners.findIndex(c => c.x === entry.x && c.y === entry.y);
+    const exitIdx = corners.findIndex(c => c.x === exit.x && c.y === exit.y);
+    const path1: Position[] = [];
+    for (let i = entryIdx; i !== exitIdx; i = (i + 1) % 4) path1.push(corners[i]);
+    path1.push(corners[exitIdx]);
+    const path2: Position[] = [];
+    for (let i = entryIdx; i !== exitIdx; i = (i + 3) % 4) path2.push(corners[i]);
+    path2.push(corners[exitIdx]);
+    // Choose the shorter path
+    const dist1 = path1.reduce((acc, p, i) => i > 0 ? acc + this.getDistance(path1[i - 1], p) : 0, this.getDistance(from, entry));
+    const dist2 = path2.reduce((acc, p, i) => i > 0 ? acc + this.getDistance(path2[i - 1], p) : 0, this.getDistance(from, entry));
+    const boundaryPath = (dist1 < dist2 ? path1 : path2);
+    return [from, entry, ...boundaryPath, exit, to];
+  }
+
   // Update vehicle position and parameters
   public updateVehicle(
     vehicle: Vehicle,
@@ -472,6 +567,7 @@ export class SimulationEngine {
       this.addLog(vehicle.id, 'PEDESTRIAN_STOP', `Stopped for pedestrian (within 10 units), speed: 0`, vehicle.position);
       return updatedVehicle;
     } else if (pedestrianBlock.status === 'slow') {
+      // Just slow down for pedestrian, do not reroute segment
       obstacleDetected = true;
       randomObstacleSpeed = 8 + Math.random() * 4; // Slow speed
       updatedVehicle.parameters.speed = randomObstacleSpeed;
@@ -549,40 +645,52 @@ export class SimulationEngine {
       let newRoute: Position[] = [];
       let from = vehicle.position;
       for (let i = 0; i < remainingWaypoints.length; i++) {
-        const to = remainingWaypoints[i];
-        const segment = this.pathfinder.findPath(
-          from,
-          to,
-          traffic,
-          pedestrians,
-          vehicle.parameters,
-          this.mapType
-        );
+        let to = remainingWaypoints[i];
+        let segment = null;
+        if (this.mapType === 'warehouse') {
+          segment = this.pathfinder.findPath(from, to, traffic, pedestrians, vehicle.parameters, this.mapType);
+          if (!segment || segment.length <= 1) {
+            // If direct path fails, try to detour around the storage unit
+            const detourPath = this.detourAroundStorageUnit(from, to, 8);
+            if (detourPath.length > 2) {
+              // Try to smooth and use the detour path
+              segment = detourPath;
+              this.addLog(vehicle.id, 'REROUTE_DETOUR', 'Detoured around storage unit boundary.', vehicle.position);
+            } else {
+              // If still not possible, try nearest safe point
+              const safe = this.findNearestSafePoint(to.x, to.y, 8);
+              segment = this.pathfinder.findPath(from, safe, traffic, pedestrians, vehicle.parameters, this.mapType);
+              if (segment && segment.length > 1) {
+                this.addLog(vehicle.id, 'REROUTE_SAFE_POINT', 'Rerouted to nearest safe point around obstacle.', vehicle.position);
+                to = safe;
+              } else {
+                // If still not possible, just continue to next waypoint
+                this.addLog(vehicle.id, 'SKIPPED_WAYPOINT', 'Skipped unreachable waypoint during reroute.', vehicle.position);
+                continue;
+              }
+            }
+          }
+        } else {
+          segment = this.pathfinder.findPath(from, to, traffic, pedestrians, vehicle.parameters, this.mapType);
+        }
         if (segment && segment.length > 1) {
-          // Avoid duplicating the starting point except for the first segment
           if (newRoute.length > 0) {
             newRoute = newRoute.concat(segment.slice(1));
           } else {
             newRoute = newRoute.concat(segment);
           }
           from = to;
-        } else {
-          // If any segment is not found, stop the vehicle and log the event
-          this.addLog(vehicle.id, 'UNREACHABLE_DESTINATION', 'Could not find a path to a waypoint during reroute. Stopping.', vehicle.position);
-          updatedVehicle.isMoving = false;
-          updatedVehicle.lastDecision = 'Destination unreachable';
-          return updatedVehicle;
         }
       }
-      if (newRoute.length > 1) {
+      if (newRoute.length <= 1) {
+        // If no alternative path found, just keep the vehicle moving in place (do not stop)
+        this.addLog(vehicle.id, 'UNREACHABLE_DESTINATION', 'Could not find a path to any waypoint during reroute. Vehicle will keep trying.', vehicle.position);
+        updatedVehicle.isMoving = true;
+        updatedVehicle.lastDecision = 'No valid reroute found, will keep trying.';
+        // Do not return early, let the vehicle keep trying in the next update
+      } else {
         updatedVehicle.route = newRoute;
         updatedVehicle.currentRouteIndex = 0;
-      } else {
-        // If no alternative path found, stop the vehicle and log the event
-        this.addLog(vehicle.id, 'UNREACHABLE_DESTINATION', 'Could not find a path to the final destination avoiding obstacles. Stopping.', vehicle.position);
-        updatedVehicle.isMoving = false; // Stop the vehicle
-        updatedVehicle.lastDecision = 'Destination unreachable';
-        return updatedVehicle; // Return early, as the vehicle has stopped
       }
       // More specific rerouting reasons
       if (vehicle.parameters.batteryPercentage < 15) {
@@ -598,7 +706,7 @@ export class SimulationEngine {
     }
 
     // Proactive reroute if any of the next 5 waypoints are inside a building
-    if (this.mapType === 'city' && vehicle.currentRouteIndex < vehicle.route.length - 1) {
+    if ((this.mapType === 'city') && vehicle.currentRouteIndex < vehicle.route.length - 1) {
       const lookahead = 5;
       let rerouteNeeded = false;
       for (let i = 1; i <= lookahead && vehicle.currentRouteIndex + i < vehicle.route.length; i++) {
@@ -615,7 +723,8 @@ export class SimulationEngine {
         let newRoute: Position[] = [];
         let from = vehicle.position;
         for (let i = 0; i < remainingWaypoints.length; i++) {
-          const to = remainingWaypoints[i];
+          let to = remainingWaypoints[i];
+          if (this.mapType === 'warehouse') to = this.findNearestSafePoint(to.x, to.y, 8);
           const segment = this.pathfinder.findPath(
             from,
             to,
@@ -684,7 +793,8 @@ export class SimulationEngine {
         let newRoute: Position[] = [];
         let from = vehicle.position;
         for (let i = 0; i < remainingWaypoints.length; i++) {
-          const to = remainingWaypoints[i];
+          let to = remainingWaypoints[i];
+          if (this.mapType === 'warehouse') to = this.findNearestSafePoint(to.x, to.y, 8);
           const segment = this.pathfinder.findPath(
             from,
             to,
@@ -737,7 +847,8 @@ export class SimulationEngine {
         let newRoute: Position[] = [];
         let from = vehicle.position;
         for (let i = 0; i < remainingWaypoints.length; i++) {
-          const to = remainingWaypoints[i];
+          let to = remainingWaypoints[i];
+          if (this.mapType === 'warehouse') to = this.findNearestSafePoint(to.x, to.y, 8);
           const segment = this.pathfinder.findPath(
             from,
             to,
@@ -771,42 +882,13 @@ export class SimulationEngine {
         this.mapType === 'warehouse' &&
         this.segmentCrossesStorageUnit(vehicle.position, nextPosition)
       ) {
-        this.addLog(vehicle.id, 'STORAGE_UNIT_AVOID', 'Rerouting: Path to next waypoint would enter storage unit.', vehicle.position);
-        // Reroute through all remaining waypoints
-        const remainingWaypoints = vehicle.route.slice(vehicle.currentRouteIndex + 1);
-        let newRoute: Position[] = [];
-        let from = vehicle.position;
-        for (let i = 0; i < remainingWaypoints.length; i++) {
-          const to = remainingWaypoints[i];
-          const segment = this.pathfinder.findPath(
-            from,
-            to,
-            traffic,
-            pedestrians,
-            vehicle.parameters,
-            this.mapType
-          );
-          if (segment && segment.length > 1) {
-            if (newRoute.length > 0) {
-              newRoute = newRoute.concat(segment.slice(1));
-            } else {
-              newRoute = newRoute.concat(segment);
-            }
-            from = to;
-          } else {
-            updatedVehicle.isMoving = false;
-            updatedVehicle.lastDecision = 'Destination unreachable (storage unit)';
-            return updatedVehicle;
-          }
+        // Only log and reroute once for the same unreachable waypoint
+        if (vehicle.lastDecision !== 'Destination unreachable (storage unit)') {
+          this.addLog(vehicle.id, 'STORAGE_UNIT_AVOID', 'Rerouting: Path to next waypoint would enter storage unit.', vehicle.position);
         }
-        if (newRoute.length > 1) {
-          updatedVehicle.route = newRoute;
-          updatedVehicle.currentRouteIndex = 0;
-        } else {
-          updatedVehicle.isMoving = false;
-          updatedVehicle.lastDecision = 'Destination unreachable (storage unit)';
-          return updatedVehicle;
-        }
+        updatedVehicle.isMoving = false;
+        updatedVehicle.lastDecision = 'Destination unreachable (storage unit)';
+        return updatedVehicle;
       } else {
         updatedVehicle.position = nextPosition;
         updatedVehicle.totalDistance += moveDistance;
@@ -814,29 +896,16 @@ export class SimulationEngine {
       // Check if reached next waypoint
       const distanceToTarget = this.getDistance(updatedVehicle.position, targetPosition);
       if (distanceToTarget < 1) {
-        if (updatedVehicle.currentRouteIndex < updatedVehicle.route.length - 2) {
-          // Not at last waypoint, keep moving
-          updatedVehicle.currentRouteIndex++;
-          updatedVehicle.lastDecision = `Reached waypoint ${updatedVehicle.currentRouteIndex}`;
-        } else {
-          // At last waypoint, stop
-          updatedVehicle.currentRouteIndex++;
-          updatedVehicle.isMoving = false;
-          updatedVehicle.parameters.speed = 0;
-          updatedVehicle.lastDecision = 'Final waypoint reached';
-          this.addLog(vehicle.id, 'FINAL_WAYPOINT_REACHED', `Final waypoint reached, speed: 0`, updatedVehicle.position);
-          if (this._onDestinationReached) {
-            this._onDestinationReached(vehicle.id);
-          }
-        }
+        updatedVehicle.currentRouteIndex++;
+        updatedVehicle.lastDecision = `Reached waypoint ${updatedVehicle.currentRouteIndex}`;
       }
     } else {
       updatedVehicle.isMoving = false;
       updatedVehicle.parameters.speed = 0;
       // Only log and trigger callback if the vehicle was previously moving
       if (vehicle.isMoving) {
-        updatedVehicle.lastDecision = 'Final waypoint reached';
-        this.addLog(vehicle.id, 'FINAL_WAYPOINT_REACHED', `Final waypoint reached, speed: 0`, updatedVehicle.position);
+        updatedVehicle.lastDecision = 'Destination reached';
+        this.addLog(vehicle.id, 'DESTINATION_REACHED', `Destination reached, speed: 0`, vehicle.position);
         if (this._onDestinationReached) {
           this._onDestinationReached(vehicle.id);
         }
@@ -961,5 +1030,41 @@ export class SimulationEngine {
   // Get recent logs
   public getLogs(): LogEntry[] {
     return [...this.logs].reverse();
+  }
+
+  // Add a constant for the charge station position
+  private CHARGE_STATION = { x: 760, y: 560 };
+
+  // In the method that handles 'Drain Fuel', update the vehicle's route to only the charge station and reroute
+  // Find the method that sets lowBatteryMode or handles battery drain
+  // Example patch for a drainFuel method or similar:
+  public drainFuel(vehicle: Vehicle, traffic: TrafficCondition[], pedestrians: Pedestrian[]): Vehicle {
+    const updatedVehicle = { ...vehicle };
+    updatedVehicle.parameters.batteryPercentage = Math.floor(Math.random() * 10) + 1;
+    updatedVehicle.lowBatteryMode = true;
+    // Set route to only the charge station
+    updatedVehicle.route = [vehicle.position, this.CHARGE_STATION];
+    updatedVehicle.currentRouteIndex = 0;
+    // Reroute to the charge station using all normal rules
+    const segment = this.pathfinder.findPath(
+      vehicle.position,
+      this.CHARGE_STATION,
+      traffic,
+      pedestrians,
+      vehicle.parameters,
+      this.mapType
+    );
+    if (segment && segment.length > 1) {
+      updatedVehicle.route = segment;
+      updatedVehicle.currentRouteIndex = 0;
+      updatedVehicle.isMoving = true;
+      updatedVehicle.lastDecision = 'Low battery: rerouting to charge station';
+      this.addLog(vehicle.id, 'BATTERY_LOW_REROUTE', 'Rerouting to charge station at bottom right', vehicle.position);
+    } else {
+      updatedVehicle.isMoving = false;
+      updatedVehicle.lastDecision = 'Charge station unreachable';
+      this.addLog(vehicle.id, 'BATTERY_LOW_REROUTE', 'Charge station unreachable', vehicle.position);
+    }
+    return updatedVehicle;
   }
 }

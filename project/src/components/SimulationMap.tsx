@@ -2,18 +2,22 @@ import React from 'react';
 import { Vehicle, TrafficCondition, Pedestrian, Position } from '../types/simulation';
 import * as Icons from 'lucide-react';
 import { VehicleHUD } from './VehicleHUD';
+import { isInAnyStorageUnit } from '../utils/pathfinding';
 
 // Storage units for warehouse layout (exported for pathfinding/collision logic)
 export const warehouseStorageUnits = [
-  { id: 'UT67', name: 'Auto-parts', x: 500, y: 250, width: 60, height: 180 },
+  { id: 'UT67', name: 'Auto-parts', x: 120, y: 410, width: 60, height: 180 },
   { id: 'BX12', name: 'Electronics', x: 220, y: 60, width: 40, height: 120 },
   { id: 'QF34', name: 'Furniture', x: 320, y: 200, width: 100, height: 40 },
-  { id: 'PL88', name: 'Machinery', x: 300, y: 420, width: 60, height: 200 },
+  { id: 'PL88', name: 'Machinery', x: 520, y: 100, width: 60, height: 200 },
   { id: 'GH21', name: 'Textiles', x: 670, y: 80, width: 80, height: 60 },
-  { id: 'WD55', name: 'Chemicals', x: 160, y: 350, width: 120, height: 60 },
+  { id: 'WD55', name: 'Chemicals', x: 160, y: 320, width: 120, height: 60 },
   { id: 'SR09', name: 'Beverages', x: 390, y: 350, width: 60, height: 120 },
   { id: 'LK73', name: 'Pharma', x: 640, y: 350, width: 100, height: 80 }
 ];
+
+// Add a constant for the charge station position
+const CHARGE_STATION = { x: 760, y: 560 };
 
 interface SimulationMapProps {
   vehicles: Vehicle[];
@@ -22,7 +26,6 @@ interface SimulationMapProps {
   onMapClick: (position: Position) => void;
   mapType: 'warehouse' | 'city';
   selectedVehicleIndex?: number;
-  selectedUnitIds?: string[];
 }
 
 export const SimulationMap: React.FC<SimulationMapProps> = ({
@@ -31,13 +34,17 @@ export const SimulationMap: React.FC<SimulationMapProps> = ({
   pedestrians,
   onMapClick,
   mapType,
-  selectedVehicleIndex = 0,
-  selectedUnitIds
+  selectedVehicleIndex = 0
 }) => {
   const handleMapClick = (event: React.MouseEvent<SVGElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+    // Block waypoints inside/near storage units in warehouse mode
+    if (mapType === 'warehouse' && isInAnyStorageUnit(x, y, 5)) {
+      alert('Cannot place waypoint inside or too close to a storage unit!');
+      return;
+    }
     onMapClick({ x, y });
   };
 
@@ -171,7 +178,7 @@ export const SimulationMap: React.FC<SimulationMapProps> = ({
               y={unit.y}
               width={unit.width}
               height={unit.height}
-              fill={selectedUnitIds && selectedUnitIds.includes(unit.id) ? '#2563EB' : '#444'}
+              fill="#444"
               stroke="#222"
               strokeWidth={3}
               opacity={0.8}
@@ -338,18 +345,26 @@ export const SimulationMap: React.FC<SimulationMapProps> = ({
               {/* Waypoint markers */}
               {showTrails && vehicle.route.length > 1 && (
                 <>
-                  {vehicle.route.map((point, idx) => (
-                    <circle
-                      key={`waypoint-${vehicle.id}-${idx}`}
-                      cx={point.x}
-                      cy={point.y}
-                      r={idx === vehicle.route.length - 1 ? 8 : 4}
-                      fill={idx === vehicle.route.length - 1 ? '#EF4444' : '#3B82F6'}
-                      stroke="white"
-                      strokeWidth={idx === vehicle.route.length - 1 ? 2 : 1}
-                      opacity={idx >= vehicle.currentRouteIndex ? 1 : 0.3}
-                    />
-                  ))}
+                  {vehicle.route.map((point, idx) => {
+                    // Manually marked waypoints: not start or destination
+                    const isStart = idx === 0;
+                    const isEnd = idx === vehicle.route.length - 1;
+                    let fill = '#3B82F6';
+                    if (isEnd) fill = '#EF4444';
+                    else if (!isStart) fill = '#FFD600'; // yellow for manual
+                    return (
+                      <circle
+                        key={`waypoint-${vehicle.id}-${idx}`}
+                        cx={point.x}
+                        cy={point.y}
+                        r={isEnd ? 8 : 4}
+                        fill={fill}
+                        stroke="white"
+                        strokeWidth={isEnd ? 2 : 1}
+                        opacity={idx >= vehicle.currentRouteIndex ? 1 : 0.3}
+                      />
+                    );
+                  })}
                 </>
               )}
               {/* Vehicle shadow */}
@@ -425,6 +440,41 @@ export const SimulationMap: React.FC<SimulationMapProps> = ({
             </g>
           );
         })}
+
+        {/* Charge Station Marker */}
+        {mapType === 'warehouse' && (
+          <g>
+            <circle
+              cx={CHARGE_STATION.x}
+              cy={CHARGE_STATION.y}
+              r={16}
+              fill="#10B981"
+              stroke="#065F46"
+              strokeWidth={3}
+              opacity={0.9}
+            />
+            <text
+              x={CHARGE_STATION.x}
+              y={CHARGE_STATION.y + 5}
+              textAnchor="middle"
+              fontSize="16"
+              fill="#fff"
+              fontWeight="bold"
+            >
+              ⚡
+            </text>
+            <text
+              x={CHARGE_STATION.x}
+              y={CHARGE_STATION.y + 28}
+              textAnchor="middle"
+              fontSize="11"
+              fill="#065F46"
+              fontWeight="bold"
+            >
+              Charge Station
+            </text>
+          </g>
+        )}
       </svg>
 
       {/* Enhanced map legend */}
@@ -432,21 +482,18 @@ export const SimulationMap: React.FC<SimulationMapProps> = ({
         <h3 className="font-semibold mb-2 text-gray-800">Map Legend</h3>
         <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
-            <div className="w-3 h-4 bg-blue-600 rounded-sm"></div>
+            <div className="w-3 h-4 bg-black rounded-sm"></div>
             <span className="text-gray-700">Active Vehicle</span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-4 bg-gray-500 rounded-sm"></div>
-            <span className="text-gray-700">Stopped Vehicle</span>
+            <span className="text-gray-700">Storage Units</span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="w-2.5 h-2.5 bg-red-500 rounded-full"></div>
             <span className="text-gray-700">Blocking Pedestrian</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 bg-blue-500 rounded-full"></div>
-            <span className="text-gray-700">Moving Pedestrian</span>
-          </div>
+          
           <div className="flex items-center gap-1.5">
             <Icons.AlertTriangle className="w-2.5 h-2.5 text-amber-500" />
             <span className="text-gray-700">Traffic Condition</span>
@@ -458,6 +505,12 @@ export const SimulationMap: React.FC<SimulationMapProps> = ({
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-1 bg-red-500"></div>
             <span className="text-gray-700">Pedestrian Alert</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-4 h-4 rounded-full flex items-center justify-center" style={{ background: '#10B981', border: '2px solid #065F46' }}>
+              <span style={{ color: '#fff', fontWeight: 'bold', fontSize: '13px', lineHeight: 1 }}>⚡</span>
+            </div>
+            <span className="text-gray-700">Charge Station</span>
           </div>
         </div>
       </div>

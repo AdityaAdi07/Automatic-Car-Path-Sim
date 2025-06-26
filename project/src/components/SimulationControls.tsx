@@ -10,9 +10,6 @@ interface SimulationControlsProps {
   onAddVehicle: () => void;
   onGenerateTraffic: () => void;
   onDrainFuel?: () => void;
-  warehouseStorageUnits: { id: string; name: string }[];
-  selectedUnitIds: string[];
-  onToggleUnitSelect: (id: string) => void;
 }
 
 export const SimulationControls: React.FC<SimulationControlsProps> = ({
@@ -23,10 +20,7 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
   onSpeedChange,
   onAddVehicle,
   onGenerateTraffic,
-  onDrainFuel,
-  warehouseStorageUnits,
-  selectedUnitIds,
-  onToggleUnitSelect
+  onDrainFuel
 }) => {
   return (
     <div className="bg-white rounded-lg shadow-lg p-4 space-y-4">
@@ -108,23 +102,14 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
         </button>
       </div>
 
-      {/* Storage Unit List (replaces Instructions) */}
+      {/* Instructions */}
       <div className="border-t pt-4 text-sm text-gray-600">
-        <h3 className="font-medium mb-2">Storage Units (Double-click to select/deselect):</h3>
+        <h3 className="font-medium mb-2">Instructions:</h3>
         <ul className="space-y-1 text-xs">
-          {warehouseStorageUnits.map(unit => (
-            <li
-              key={unit.id}
-              onDoubleClick={() => onToggleUnitSelect(unit.id)}
-              className={`px-2 py-1 rounded cursor-pointer select-none transition-colors ${
-                selectedUnitIds.includes(unit.id)
-                  ? 'bg-blue-600 text-white font-semibold' : 'hover:bg-blue-100'
-              }`}
-              title={unit.name}
-            >
-              <span className="font-mono mr-2">{unit.id}</span> {unit.name}
-            </li>
-          ))}
+          <li>• Click on map to set vehicle destinations</li>
+          <li>• Red pedestrians block vehicle movement</li>
+          <li>• Vehicles reroute based on traffic and battery</li>
+          <li>• Watch battery levels and tire pressure</li>
         </ul>
       </div>
     </div>

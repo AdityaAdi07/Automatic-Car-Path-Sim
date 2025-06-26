@@ -80,7 +80,7 @@ export class PathfindingEngine {
           }
         } else {
           // Warehouse mode: block storage units with 5px gap
-          if (!isInAnyStorageUnit(newPos.x, newPos.y, 5)) {
+          if (!isInAnyStorageUnit(newPos.x, newPos.y, 8)) {
             // Check that the segment from position to newPos does not cross a storage unit
             let crossesObstacle = false;
             const steps = 10;
@@ -88,7 +88,7 @@ export class PathfindingEngine {
               const t = s / steps;
               const x = position.x + (newPos.x - position.x) * t;
               const y = position.y + (newPos.y - position.y) * t;
-              if (isInAnyStorageUnit(x, y, 5)) {
+              if (isInAnyStorageUnit(x, y, 8)) {
                 crossesObstacle = true;
                 break;
               }
@@ -327,7 +327,7 @@ export class PathfindingEngine {
           return false;
         }
       } else if (mapType === 'warehouse') {
-        if (isInAnyStorageUnit(checkPos.x, checkPos.y, 5)) {
+        if (isInAnyStorageUnit(checkPos.x, checkPos.y, 8)) {
           return false;
         }
       }
@@ -412,7 +412,7 @@ export class PathfindingEngine {
 }
 
 // Helper: check if a point is inside or within 'gap' px of any warehouse storage unit
-export function isInAnyStorageUnit(x: number, y: number, gap: number = 5): boolean {
+export function isInAnyStorageUnit(x: number, y: number, gap: number = 8): boolean {
   for (const unit of warehouseStorageUnits) {
     if (
       x >= unit.x - gap &&
