@@ -9,6 +9,7 @@ import { EnvironmentControls } from './components/EnvironmentControls';
 import { LogPanel } from './components/LogPanel';
 import { SimulationState, Position, TrafficCondition, Pedestrian, LogEntry } from './types/simulation';
 import * as Icons from 'lucide-react';
+import { warehouseStorageUnits } from './components/SimulationMap';
 
 function App() {
   const [simulationEngine] = useState(() => new SimulationEngine());
@@ -24,8 +25,21 @@ function App() {
   const [selectedVehicleIndex, setSelectedVehicleIndex] = useState(0);
   const [notification, setNotification] = useState<{ message: string; type: string } | null>(null);
   const [mapType, setMapType] = useState<'warehouse' | 'city'>('warehouse');
+  const [selectedStorageUnitIds, setSelectedStorageUnitIds] = useState<string[]>([]);
 
   const cityPathfinder = new PathfindingEngine();
+
+  // Green zones for each map layout
+  const warehouseGreenZones = [
+    { x: 120, y: 120 }
+  ];
+  const cityGreenZones = [
+    { x: 700, y: 500 }
+  ];
+  const greenZones = mapType === 'city' ? cityGreenZones : warehouseGreenZones;
+
+  // Store green zone for each vehicle at simulation start
+  const [vehicleGreenZones, setVehicleGreenZones] = useState<{ [id: string]: { x: number; y: number } }>({});
 
   // Initialize simulation
   useEffect(() => {
@@ -36,22 +50,26 @@ function App() {
     });
 
     let vehicles = [];
+    const greenZoneMap: { [id: string]: { x: number; y: number } } = {};
     if (mapType === 'city') {
-      // Spawn more vehicles for city
-      vehicles = Array.from({ length: 5 }, (_, i) =>
-        simulationEngine.createVehicle(
+      vehicles = Array.from({ length: 5 }, (_, i) => {
+        const v = simulationEngine.createVehicle(
           `AV-${String(i + 1).padStart(3, '0')}`,
           { x: 100 + i * 100, y: 100 },
           []
-        )
-      );
+        );
+        greenZoneMap[v.id] = cityGreenZones[0];
+        return v;
+      });
     } else {
       vehicles = [simulationEngine.createVehicle('AV-001', { x: 100, y: 100 }, [])];
+      greenZoneMap['AV-001'] = warehouseGreenZones[0];
     }
 
     const traffic = simulationEngine.generateTrafficConditions();
     const pedestrians = simulationEngine.generatePedestrians();
 
+    setVehicleGreenZones(greenZoneMap);
     setSimulationState(prev => ({
       ...prev,
       vehicles,
@@ -77,6 +95,7 @@ function App() {
         if (mapType === 'city') {
           vehicles = vehicles.map((vehicle, i) => {
             if (i === selectedVehicleIndex) return vehicle;
+            if (vehicle.lowBatteryMode) return vehicle;
             // If stopped or at destination, assign a new random destination and route
             if (!vehicle.isMoving || vehicle.currentRouteIndex >= vehicle.route.length - 1) {
               let newDest;
@@ -254,6 +273,92 @@ function App() {
     }));
   }, []);
 
+  // Drain Fuel handler
+  const handleDrainFuel = useCallback(() => {
+    setSimulationState(prev => {
+      if (prev.vehicles.length === 0) return prev;
+      const selectedVehicle = prev.vehicles[selectedVehicleIndex];
+      // Random battery between 5 and 20
+      const newBattery = Math.floor(Math.random() * 16) + 5;
+      // Always go to the stored green zone for this vehicle
+      const curr = selectedVehicle.position;
+      const greenZone = vehicleGreenZones[selectedVehicle.id] || greenZones[0];
+      const newRoute = [curr, greenZone];
+      return {
+        ...prev,
+        vehicles: prev.vehicles.map((v, i) =>
+          i === selectedVehicleIndex
+            ? {
+                ...v,
+                parameters: {
+                  ...v.parameters,
+                  batteryPercentage: newBattery
+                },
+                lowBatteryMode: true,
+                route: newRoute,
+                currentRouteIndex: 0,
+                isMoving: true,
+                lastDecision: 'Low battery mode: rerouting to green zone center'
+              }
+            : v
+        )
+      };
+    });
+  }, [selectedVehicleIndex, vehicleGreenZones, greenZones]);
+
+  // Toggle storage unit selection (double-click)
+  const handleToggleUnitSelect = useCallback((id: string) => {
+    setSelectedStorageUnitIds(prev => {
+      if (prev.includes(id)) {
+        return prev.filter(unitId => unitId !== id);
+      } else {
+        return [...prev, id];
+      }
+    });
+  }, []);
+
+  // Compute selected storage unit waypoints (edge points, in order)
+  const selectedStorageWaypoints = selectedStorageUnitIds
+    .map(id => {
+      const unit = warehouseStorageUnits.find(u => u.id === id);
+      if (!unit) return null;
+      // Find a point just outside the edge (8px away from the closest edge to the center)
+      // We'll use left edge for now
+      return {
+        x: unit.x - 8, // 8px to the left of the unit
+        y: unit.y + unit.height / 2
+      };
+    })
+    .filter(Boolean) as { x: number; y: number }[];
+
+  // When selectedStorageUnitIds changes, update the selected vehicle's route to include these waypoints before the destination
+  useEffect(() => {
+    setSimulationState(prev => {
+      if (prev.vehicles.length === 0) return prev;
+      const selectedVehicle = prev.vehicles[selectedVehicleIndex];
+      const currentPos = selectedVehicle.position;
+      let newRoute;
+      if (selectedStorageWaypoints.length > 0) {
+        newRoute = [currentPos, ...selectedStorageWaypoints];
+      } else {
+        const dest = selectedVehicle.route.length > 0 ? selectedVehicle.route[selectedVehicle.route.length - 1] : currentPos;
+        newRoute = [currentPos, dest];
+      }
+      return {
+        ...prev,
+        vehicles: prev.vehicles.map((v, i) =>
+          i === selectedVehicleIndex
+            ? {
+                ...v,
+                route: newRoute,
+                currentRouteIndex: 0
+              }
+            : v
+        )
+      };
+    });
+  }, [selectedStorageWaypoints, selectedVehicleIndex]);
+
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       {notification && (
@@ -332,6 +437,7 @@ function App() {
               onMapClick={handleMapClick}
               mapType={mapType}
               selectedVehicleIndex={selectedVehicleIndex}
+              selectedUnitIds={selectedStorageUnitIds}
             />
 
             {/* Detailed Vehicle Panel - Moved below map */}
@@ -356,6 +462,10 @@ function App() {
               onSpeedChange={handleSpeedChange}
               onAddVehicle={handleAddVehicle}
               onGenerateTraffic={handleGenerateTraffic}
+              onDrainFuel={handleDrainFuel}
+              warehouseStorageUnits={warehouseStorageUnits}
+              selectedUnitIds={selectedStorageUnitIds}
+              onToggleUnitSelect={handleToggleUnitSelect}
             />
 
             {/* Environment Controls */}

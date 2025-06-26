@@ -3,6 +3,18 @@ import { Vehicle, TrafficCondition, Pedestrian, Position } from '../types/simula
 import * as Icons from 'lucide-react';
 import { VehicleHUD } from './VehicleHUD';
 
+// Storage units for warehouse layout (exported for pathfinding/collision logic)
+export const warehouseStorageUnits = [
+  { id: 'UT67', name: 'Auto-parts', x: 500, y: 250, width: 60, height: 180 },
+  { id: 'BX12', name: 'Electronics', x: 220, y: 60, width: 40, height: 120 },
+  { id: 'QF34', name: 'Furniture', x: 320, y: 200, width: 100, height: 40 },
+  { id: 'PL88', name: 'Machinery', x: 300, y: 420, width: 60, height: 200 },
+  { id: 'GH21', name: 'Textiles', x: 670, y: 80, width: 80, height: 60 },
+  { id: 'WD55', name: 'Chemicals', x: 160, y: 350, width: 120, height: 60 },
+  { id: 'SR09', name: 'Beverages', x: 390, y: 350, width: 60, height: 120 },
+  { id: 'LK73', name: 'Pharma', x: 640, y: 350, width: 100, height: 80 }
+];
+
 interface SimulationMapProps {
   vehicles: Vehicle[];
   traffic: TrafficCondition[];
@@ -10,6 +22,7 @@ interface SimulationMapProps {
   onMapClick: (position: Position) => void;
   mapType: 'warehouse' | 'city';
   selectedVehicleIndex?: number;
+  selectedUnitIds?: string[];
 }
 
 export const SimulationMap: React.FC<SimulationMapProps> = ({
@@ -18,7 +31,8 @@ export const SimulationMap: React.FC<SimulationMapProps> = ({
   pedestrians,
   onMapClick,
   mapType,
-  selectedVehicleIndex = 0
+  selectedVehicleIndex = 0,
+  selectedUnitIds
 }) => {
   const handleMapClick = (event: React.MouseEvent<SVGElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -149,6 +163,45 @@ export const SimulationMap: React.FC<SimulationMapProps> = ({
           />
         ))}
 
+        {/* Render warehouse storage units as obstacles if warehouse map is selected */}
+        {mapType === 'warehouse' && warehouseStorageUnits.map((unit) => (
+          <g key={`storage-${unit.id}`}>
+            <rect
+              x={unit.x}
+              y={unit.y}
+              width={unit.width}
+              height={unit.height}
+              fill={selectedUnitIds && selectedUnitIds.includes(unit.id) ? '#2563EB' : '#444'}
+              stroke="#222"
+              strokeWidth={3}
+              opacity={0.8}
+              rx={8}
+            />
+            {/* Label for storage unit */}
+            <text
+              x={unit.x + unit.width / 2}
+              y={unit.y + unit.height / 2 - 6}
+              textAnchor="middle"
+              fontSize="12"
+              fill="#fff"
+              fontWeight="bold"
+              pointerEvents="none"
+            >
+              {unit.id}
+            </text>
+            <text
+              x={unit.x + unit.width / 2}
+              y={unit.y + unit.height / 2 + 12}
+              textAnchor="middle"
+              fontSize="11"
+              fill="#fff"
+              pointerEvents="none"
+            >
+              {unit.name}
+            </text>
+          </g>
+        ))}
+
         {/* Traffic conditions */}
         {traffic.map((condition, index) => (
           <g key={`traffic-${index}`}>
@@ -254,7 +307,7 @@ export const SimulationMap: React.FC<SimulationMapProps> = ({
         {/* Vehicles */}
         {vehicles.map((vehicle, idx) => {
           const rotation = getVehicleRotation(vehicle);
-          const vehicleColor = vehicle.isMoving ? '#2563EB' : '#6B7280';
+          const vehicleColor = vehicle.lowBatteryMode ? '#EF4444' : (vehicle.isMoving ? '#2563EB' : '#6B7280');
           // Only show trails for av-001 in city mode
           const showTrails =
             mapType === 'warehouse' ||

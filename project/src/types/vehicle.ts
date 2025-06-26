@@ -10,4 +10,5 @@ export interface Vehicle {
     initialSpeed: number;
     batteryPercentage: number;
   };
+  lowBatteryMode?: boolean;
 } 

@@ -6,7 +6,7 @@ import {
   Pedestrian, 
   LogEntry 
 } from '../types/simulation';
-import { PathfindingEngine } from './pathfinding';
+import { PathfindingEngine, isInAnyStorageUnit } from './pathfinding';
 
 export class SimulationEngine {
   private pathfinder: PathfindingEngine;
@@ -115,24 +115,20 @@ export class SimulationEngine {
   private checkPedestrianBlocking(
     vehicle: Vehicle,
     pedestrians: Pedestrian[]
-  ): Pedestrian | { pedestrian: Pedestrian; slowDown: true; slowDownFactor: number } | null {
-    // If vehicle has no next waypoint, no need to check for blocking pedestrians in path
+  ): { status: 'none' | 'detected' | 'slow' | 'stop', pedestrian?: Pedestrian } {
     if (!vehicle.isMoving || vehicle.currentRouteIndex >= vehicle.route.length - 1) {
-      return null;
+      return { status: 'none' };
     }
 
-    const pedestrianRadius = 8; // Standard pedestrian radius
-    const detectionDistance = pedestrianRadius * 10; // Detect from 10x pedestrian radius
-    
-    // Get vehicle's current direction
+    const pedestrianRadius = 8;
+    const detectionDistance = pedestrianRadius * 10;
+    const stopDistance = 10;
     const currentPos = vehicle.position;
     const nextPos = vehicle.route[vehicle.currentRouteIndex + 1];
     const direction = {
       x: nextPos.x - currentPos.x,
       y: nextPos.y - currentPos.y
     };
-    
-    // Normalize direction vector
     const length = Math.sqrt(direction.x * direction.x + direction.y * direction.y);
     const normalizedDir = {
       x: direction.x / length,
@@ -140,39 +136,52 @@ export class SimulationEngine {
     };
 
     for (const pedestrian of pedestrians) {
-      // Calculate vector from vehicle to pedestrian
       const toPedestrian = {
         x: pedestrian.position.x - currentPos.x,
         y: pedestrian.position.y - currentPos.y
       };
-
-      // Calculate distance to pedestrian
       const distance = Math.sqrt(toPedestrian.x * toPedestrian.x + toPedestrian.y * toPedestrian.y);
-      
-      // Calculate dot product to check if pedestrian is in front of vehicle
       const dotProduct = toPedestrian.x * normalizedDir.x + toPedestrian.y * normalizedDir.y;
-
-      // Only consider pedestrians in front of the vehicle
       if (dotProduct <= 0) continue;
-
-      // Calculate lateral distance (perpendicular to vehicle direction)
       const lateralDistance = Math.abs(
         toPedestrian.x * normalizedDir.y - toPedestrian.y * normalizedDir.x
       );
-
-      // If pedestrian is within the vehicle's path width (wider detection cone)
-      if (lateralDistance < 15) {
-        // If within stopping distance, return the pedestrian to stop the vehicle
-        if (distance < detectionDistance) {
-          return pedestrian;
-        }
-        // If within detection distance but beyond stopping distance, slow down
-        if (distance < detectionDistance) {
-          return { pedestrian, slowDown: true, slowDownFactor: (distance - detectionDistance) / (detectionDistance - detectionDistance) };
+      // Predictive collision check
+      const pedDir = {
+        x: pedestrian.destination.x - pedestrian.position.x,
+        y: pedestrian.destination.y - pedestrian.position.y
+      };
+      const pedLen = Math.sqrt(pedDir.x * pedDir.x + pedDir.y * pedDir.y);
+      if (pedLen === 0) continue;
+      const pedNorm = { x: pedDir.x / pedLen, y: pedDir.y / pedLen };
+      const pedNext = {
+        x: pedestrian.position.x + pedNorm.x * pedestrian.speed * 1,
+        y: pedestrian.position.y + pedNorm.y * pedestrian.speed * 1
+      };
+      const vehNext = nextPos;
+      const willIntersect = this.segmentsIntersect(currentPos, vehNext, pedestrian.position, pedNext);
+      if (lateralDistance < 15 && distance < detectionDistance || willIntersect) {
+        if (distance <= stopDistance) {
+          return { status: 'stop', pedestrian };
+        } else if (distance <= detectionDistance) {
+          return { status: 'slow', pedestrian };
+        } else {
+          return { status: 'detected', pedestrian };
         }
       }
     }
-    return null;
+    return { status: 'none' };
+  }
+
+  // Helper: check if two line segments intersect
+  private segmentsIntersect(a1: Position, a2: Position, b1: Position, b2: Position): boolean {
+    function ccw(p1: Position, p2: Position, p3: Position) {
+      return (p3.y - p1.y) * (p2.x - p1.x) > (p2.y - p1.y) * (p3.x - p1.x);
+    }
+    return (
+      ccw(a1, b1, b2) !== ccw(a2, b1, b2) &&
+      ccw(a1, a2, b1) !== ccw(a1, a2, b2)
+    );
   }
 
   // Check if traffic condition is in vehicle's path (forward detection cone)
@@ -235,6 +244,10 @@ export class SimulationEngine {
     traffic: TrafficCondition[], 
     pedestrians: Pedestrian[]
   ): boolean {
+    // If in low battery mode, do not reroute for any other reason
+    if (vehicle.lowBatteryMode) {
+      return false;
+    }
     // Critical battery rerouting
     if (vehicle.parameters.batteryPercentage < 15) {
       this.addLog(vehicle.id, 'BATTERY_LOW_REROUTE', 'Rerouting: Critical battery level', vehicle.position);
@@ -280,22 +293,15 @@ export class SimulationEngine {
       return true;
     }
 
-    // Check for persistent pedestrian blocking
-    let blockingPedestriansAhead = 0;
+    // Check for any blocking pedestrian ahead (reroute if any, not just 2+)
     for (let i = 1; i <= Math.min(3, vehicle.route.length - vehicle.currentRouteIndex - 1); i++) {
       const routePoint = vehicle.route[vehicle.currentRouteIndex + i];
-      
       for (const pedestrian of pedestrians) {
         if (pedestrian.isBlocking && this.getDistance(routePoint, pedestrian.position) < 30) {
-          blockingPedestriansAhead++;
+          this.addLog(vehicle.id, 'PEDESTRIAN_BLOCKING_REROUTE', 'Rerouting: Pedestrian blocking ahead', vehicle.position);
+          return true;
         }
       }
-    }
-
-    // Reroute if multiple blocking pedestrians ahead
-    if (blockingPedestriansAhead >= 2) {
-      this.addLog(vehicle.id, 'PEDESTRIAN_BLOCKING_REROUTE', 'Rerouting: Multiple blocking pedestrians ahead', vehicle.position);
-      return true;
     }
 
     // In city mode, reroute if any upcoming route point is inside a building
@@ -319,7 +325,7 @@ export class SimulationEngine {
           } else {
             vehicle.isMoving = false;
             vehicle.lastDecision = 'Destination unreachable (building)';
-            return vehicle;
+            return false;
           }
           break;
         }
@@ -338,6 +344,22 @@ export class SimulationEngine {
       const y = from.y + (to.y - from.y) * t;
       if (PathfindingEngine.isInAnyBuilding(x, y, 10)) {
         return true;
+      }
+    }
+    return false;
+  }
+
+  // Helper: check if the segment from 'from' to 'to' crosses a storage unit
+  private segmentCrossesStorageUnit(from: Position, to: Position): boolean {
+    const steps = 20;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const x = from.x + (to.x - from.x) * t;
+      const y = from.y + (to.y - from.y) * t;
+      if (this.mapType === 'warehouse') {
+        if (isInAnyStorageUnit(x, y, 5)) {
+          return true;
+        }
       }
     }
     return false;
@@ -441,10 +463,24 @@ export class SimulationEngine {
     // Obstacle detection: pedestrian, car, or traffic zone
     let obstacleDetected = false;
     let randomObstacleSpeed = 30;
-    // Check for pedestrian blocking in forward path only
-    const blockingPedestrianResult = this.checkPedestrianBlocking(vehicle, pedestrians);
-    if (blockingPedestrianResult) {
+    // Enhanced pedestrian blocking logic
+    const pedestrianBlock = this.checkPedestrianBlocking(vehicle, pedestrians);
+    if (pedestrianBlock.status === 'stop') {
+      updatedVehicle.isMoving = false;
+      updatedVehicle.parameters.speed = 0;
+      updatedVehicle.lastDecision = 'Stopped for pedestrian (very close)';
+      this.addLog(vehicle.id, 'PEDESTRIAN_STOP', `Stopped for pedestrian (within 10 units), speed: 0`, vehicle.position);
+      return updatedVehicle;
+    } else if (pedestrianBlock.status === 'slow') {
       obstacleDetected = true;
+      randomObstacleSpeed = 8 + Math.random() * 4; // Slow speed
+      updatedVehicle.parameters.speed = randomObstacleSpeed;
+      updatedVehicle.lastDecision = `Slowing down for pedestrian (speed: ${randomObstacleSpeed.toFixed(1)})`;
+      this.addLog(vehicle.id, 'PEDESTRIAN_SLOW', `Slowing down for pedestrian (within detection range), speed: ${randomObstacleSpeed.toFixed(1)}`, vehicle.position);
+    } else if (pedestrianBlock.status === 'detected') {
+      updatedVehicle.lastDecision = 'Pedestrian detected ahead';
+      // No speed change, but log detection
+      this.addLog(vehicle.id, 'PEDESTRIAN_DETECTED', `Pedestrian detected ahead (far), speed: ${updatedVehicle.parameters.speed.toFixed(1)}`, vehicle.position);
     }
     // Check for car ahead (city mode, av-001 only)
     if (
@@ -500,25 +536,45 @@ export class SimulationEngine {
     if (obstacleDetected) {
       randomObstacleSpeed = 15 + Math.random() * 10;
       updatedVehicle.parameters.speed = randomObstacleSpeed;
+      updatedVehicle.lastDecision = `Slowing down for obstacle (speed: ${randomObstacleSpeed.toFixed(1)})`;
+      this.addLog(vehicle.id, 'OBSTACLE_SLOW', `Slowing down for obstacle, speed: ${randomObstacleSpeed.toFixed(1)}`, vehicle.position);
     }
 
     // Enhanced rerouting check
     const shouldReroute = this.shouldRerouteVehicle(vehicle, traffic, pedestrians);
     
     if (shouldReroute) {
-      const finalDestination = vehicle.route[vehicle.route.length - 1];
-
-      const newRoute = this.pathfinder.findPath(
-        vehicle.position,
-        finalDestination,
-        traffic,
-        pedestrians,
-        vehicle.parameters,
-        this.mapType
-      );
-      
-      // Only update route if a valid new path is found
-      if (newRoute && newRoute.length > 1) {
+      // Build a new route that goes through all remaining waypoints
+      const remainingWaypoints = vehicle.route.slice(vehicle.currentRouteIndex + 1);
+      let newRoute: Position[] = [];
+      let from = vehicle.position;
+      for (let i = 0; i < remainingWaypoints.length; i++) {
+        const to = remainingWaypoints[i];
+        const segment = this.pathfinder.findPath(
+          from,
+          to,
+          traffic,
+          pedestrians,
+          vehicle.parameters,
+          this.mapType
+        );
+        if (segment && segment.length > 1) {
+          // Avoid duplicating the starting point except for the first segment
+          if (newRoute.length > 0) {
+            newRoute = newRoute.concat(segment.slice(1));
+          } else {
+            newRoute = newRoute.concat(segment);
+          }
+          from = to;
+        } else {
+          // If any segment is not found, stop the vehicle and log the event
+          this.addLog(vehicle.id, 'UNREACHABLE_DESTINATION', 'Could not find a path to a waypoint during reroute. Stopping.', vehicle.position);
+          updatedVehicle.isMoving = false;
+          updatedVehicle.lastDecision = 'Destination unreachable';
+          return updatedVehicle;
+        }
+      }
+      if (newRoute.length > 1) {
         updatedVehicle.route = newRoute;
         updatedVehicle.currentRouteIndex = 0;
       } else {
@@ -526,10 +582,8 @@ export class SimulationEngine {
         this.addLog(vehicle.id, 'UNREACHABLE_DESTINATION', 'Could not find a path to the final destination avoiding obstacles. Stopping.', vehicle.position);
         updatedVehicle.isMoving = false; // Stop the vehicle
         updatedVehicle.lastDecision = 'Destination unreachable';
-        // Do NOT update updatedVehicle.route or currentRouteIndex to prevent erratic movement
         return updatedVehicle; // Return early, as the vehicle has stopped
       }
-
       // More specific rerouting reasons
       if (vehicle.parameters.batteryPercentage < 15) {
         updatedVehicle.lastDecision = 'Emergency reroute: Critical battery level';
@@ -556,16 +610,34 @@ export class SimulationEngine {
       }
       if (rerouteNeeded) {
         this.addLog(vehicle.id, 'HIGH_TRAFFIC_AVOID', 'Rerouting: Building detected ahead in path.', vehicle.position);
-        const finalDestination = vehicle.route[vehicle.route.length - 1];
-        const newRoute = this.pathfinder.findPath(
-          vehicle.position,
-          finalDestination,
-          traffic,
-          pedestrians,
-          vehicle.parameters,
-          this.mapType
-        );
-        if (newRoute && newRoute.length > 1) {
+        // Reroute through all remaining waypoints
+        const remainingWaypoints = vehicle.route.slice(vehicle.currentRouteIndex + 1);
+        let newRoute: Position[] = [];
+        let from = vehicle.position;
+        for (let i = 0; i < remainingWaypoints.length; i++) {
+          const to = remainingWaypoints[i];
+          const segment = this.pathfinder.findPath(
+            from,
+            to,
+            traffic,
+            pedestrians,
+            vehicle.parameters,
+            this.mapType
+          );
+          if (segment && segment.length > 1) {
+            if (newRoute.length > 0) {
+              newRoute = newRoute.concat(segment.slice(1));
+            } else {
+              newRoute = newRoute.concat(segment);
+            }
+            from = to;
+          } else {
+            updatedVehicle.isMoving = false;
+            updatedVehicle.lastDecision = 'Destination unreachable (building)';
+            return updatedVehicle;
+          }
+        }
+        if (newRoute.length > 1) {
           updatedVehicle.route = newRoute;
           updatedVehicle.currentRouteIndex = 0;
         } else {
@@ -608,16 +680,33 @@ export class SimulationEngine {
       }
       if (collisionDetected) {
         this.addLog(vehicle.id, 'COLLISION_AVOID', 'Rerouting: Predicted collision course with another car (segment overlap).', vehicle.position);
-        const finalDestination = vehicle.route[vehicle.route.length - 1];
-        const newRoute = this.pathfinder.findPath(
-          vehicle.position,
-          finalDestination,
-          traffic,
-          pedestrians,
-          vehicle.parameters,
-          this.mapType
-        );
-        if (newRoute && newRoute.length > 1) {
+        const remainingWaypoints = vehicle.route.slice(vehicle.currentRouteIndex + 1);
+        let newRoute: Position[] = [];
+        let from = vehicle.position;
+        for (let i = 0; i < remainingWaypoints.length; i++) {
+          const to = remainingWaypoints[i];
+          const segment = this.pathfinder.findPath(
+            from,
+            to,
+            traffic,
+            pedestrians,
+            vehicle.parameters,
+            this.mapType
+          );
+          if (segment && segment.length > 1) {
+            if (newRoute.length > 0) {
+              newRoute = newRoute.concat(segment.slice(1));
+            } else {
+              newRoute = newRoute.concat(segment);
+            }
+            from = to;
+          } else {
+            updatedVehicle.isMoving = false;
+            updatedVehicle.lastDecision = 'Destination unreachable (collision risk)';
+            return updatedVehicle;
+          }
+        }
+        if (newRoute.length > 1) {
           updatedVehicle.route = newRoute;
           updatedVehicle.currentRouteIndex = 0;
         } else {
@@ -633,7 +722,8 @@ export class SimulationEngine {
       updatedVehicle.isMoving = true;
       const targetPosition = vehicle.route[vehicle.currentRouteIndex + 1];
       // Use the random speed if obstacle detected, else use normal speed
-      const adjustedSpeed = obstacleDetected ? randomObstacleSpeed : vehicle.parameters.speed;
+      const adjustedSpeed = obstacleDetected ? updatedVehicle.parameters.speed : vehicle.parameters.speed;
+      updatedVehicle.parameters.speed = adjustedSpeed;
       const moveDistance = adjustedSpeed * deltaTime / 1000;
       const nextPosition = this.moveToward(vehicle.position, targetPosition, moveDistance);
       // Prevent entering buildings: check the segment
@@ -642,21 +732,79 @@ export class SimulationEngine {
         this.segmentCrossesBuilding(vehicle.position, nextPosition)
       ) {
         this.addLog(vehicle.id, 'HIGH_TRAFFIC_AVOID', 'Rerouting: Path to next waypoint would enter building.', vehicle.position);
-        const finalDestination = vehicle.route[vehicle.route.length - 1];
-        const newRoute = this.pathfinder.findPath(
-          vehicle.position,
-          finalDestination,
-          traffic,
-          pedestrians,
-          vehicle.parameters,
-          this.mapType
-        );
-        if (newRoute && newRoute.length > 1) {
+        // Reroute through all remaining waypoints
+        const remainingWaypoints = vehicle.route.slice(vehicle.currentRouteIndex + 1);
+        let newRoute: Position[] = [];
+        let from = vehicle.position;
+        for (let i = 0; i < remainingWaypoints.length; i++) {
+          const to = remainingWaypoints[i];
+          const segment = this.pathfinder.findPath(
+            from,
+            to,
+            traffic,
+            pedestrians,
+            vehicle.parameters,
+            this.mapType
+          );
+          if (segment && segment.length > 1) {
+            if (newRoute.length > 0) {
+              newRoute = newRoute.concat(segment.slice(1));
+            } else {
+              newRoute = newRoute.concat(segment);
+            }
+            from = to;
+          } else {
+            updatedVehicle.isMoving = false;
+            updatedVehicle.lastDecision = 'Destination unreachable (building)';
+            return updatedVehicle;
+          }
+        }
+        if (newRoute.length > 1) {
           updatedVehicle.route = newRoute;
           updatedVehicle.currentRouteIndex = 0;
         } else {
           updatedVehicle.isMoving = false;
           updatedVehicle.lastDecision = 'Destination unreachable (building)';
+          return updatedVehicle;
+        }
+      } else if (
+        this.mapType === 'warehouse' &&
+        this.segmentCrossesStorageUnit(vehicle.position, nextPosition)
+      ) {
+        this.addLog(vehicle.id, 'STORAGE_UNIT_AVOID', 'Rerouting: Path to next waypoint would enter storage unit.', vehicle.position);
+        // Reroute through all remaining waypoints
+        const remainingWaypoints = vehicle.route.slice(vehicle.currentRouteIndex + 1);
+        let newRoute: Position[] = [];
+        let from = vehicle.position;
+        for (let i = 0; i < remainingWaypoints.length; i++) {
+          const to = remainingWaypoints[i];
+          const segment = this.pathfinder.findPath(
+            from,
+            to,
+            traffic,
+            pedestrians,
+            vehicle.parameters,
+            this.mapType
+          );
+          if (segment && segment.length > 1) {
+            if (newRoute.length > 0) {
+              newRoute = newRoute.concat(segment.slice(1));
+            } else {
+              newRoute = newRoute.concat(segment);
+            }
+            from = to;
+          } else {
+            updatedVehicle.isMoving = false;
+            updatedVehicle.lastDecision = 'Destination unreachable (storage unit)';
+            return updatedVehicle;
+          }
+        }
+        if (newRoute.length > 1) {
+          updatedVehicle.route = newRoute;
+          updatedVehicle.currentRouteIndex = 0;
+        } else {
+          updatedVehicle.isMoving = false;
+          updatedVehicle.lastDecision = 'Destination unreachable (storage unit)';
           return updatedVehicle;
         }
       } else {
@@ -666,29 +814,29 @@ export class SimulationEngine {
       // Check if reached next waypoint
       const distanceToTarget = this.getDistance(updatedVehicle.position, targetPosition);
       if (distanceToTarget < 1) {
-        updatedVehicle.currentRouteIndex++;
-        updatedVehicle.lastDecision = `Reached waypoint ${updatedVehicle.currentRouteIndex}`;
-      }
-      // Update vehicle parameters
-      const prevSpeed = updatedVehicle.parameters.speed;
-      updatedVehicle.parameters = this.updateVehicleParameters(
-        vehicle.parameters, 
-        moveDistance, 
-        traffic, 
-        vehicle.position
-      );
-      // Restore the random speed if obstacle was detected
-      if (obstacleDetected) {
-        updatedVehicle.parameters.speed = randomObstacleSpeed;
-      } else {
-        updatedVehicle.parameters.speed = prevSpeed;
+        if (updatedVehicle.currentRouteIndex < updatedVehicle.route.length - 2) {
+          // Not at last waypoint, keep moving
+          updatedVehicle.currentRouteIndex++;
+          updatedVehicle.lastDecision = `Reached waypoint ${updatedVehicle.currentRouteIndex}`;
+        } else {
+          // At last waypoint, stop
+          updatedVehicle.currentRouteIndex++;
+          updatedVehicle.isMoving = false;
+          updatedVehicle.parameters.speed = 0;
+          updatedVehicle.lastDecision = 'Final waypoint reached';
+          this.addLog(vehicle.id, 'FINAL_WAYPOINT_REACHED', `Final waypoint reached, speed: 0`, updatedVehicle.position);
+          if (this._onDestinationReached) {
+            this._onDestinationReached(vehicle.id);
+          }
+        }
       }
     } else {
       updatedVehicle.isMoving = false;
+      updatedVehicle.parameters.speed = 0;
       // Only log and trigger callback if the vehicle was previously moving
       if (vehicle.isMoving) {
-        updatedVehicle.lastDecision = 'Destination reached';
-        this.addLog(vehicle.id, 'DESTINATION_REACHED', updatedVehicle.lastDecision, vehicle.position);
+        updatedVehicle.lastDecision = 'Final waypoint reached';
+        this.addLog(vehicle.id, 'FINAL_WAYPOINT_REACHED', `Final waypoint reached, speed: 0`, updatedVehicle.position);
         if (this._onDestinationReached) {
           this._onDestinationReached(vehicle.id);
         }

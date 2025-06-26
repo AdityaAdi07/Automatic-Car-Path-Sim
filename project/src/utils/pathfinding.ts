@@ -1,7 +1,8 @@
 import { Position, PathNode, TrafficCondition, Pedestrian, VehicleParameters } from '../types/simulation';
+import { warehouseStorageUnits } from '../components/SimulationMap';
 
 export class PathfindingEngine {
-  private gridSize: number = 10;
+  private gridSize: number = 5;
   private mapWidth: number = 800;
   private mapHeight: number = 600;
 
@@ -59,16 +60,17 @@ export class PathfindingEngine {
   private getNeighbors(position: Position, mapType: 'warehouse' | 'city' = 'warehouse', fromInsideBuilding = false): Position[] {
     const neighbors: Position[] = [];
     const directions = [
-      { x: 0, y: -this.gridSize },
-      { x: this.gridSize, y: 0 },
-      { x: 0, y: this.gridSize },
-      { x: -this.gridSize, y: 0 },
-      { x: this.gridSize, y: -this.gridSize },
-      { x: this.gridSize, y: this.gridSize },
-      { x: -this.gridSize, y: this.gridSize },
-      { x: -this.gridSize, y: -this.gridSize }
+      { x: 0, y: -this.gridSize }, // up
+      { x: this.gridSize, y: 0 }, // right
+      { x: 0, y: this.gridSize }, // down
+      { x: -this.gridSize, y: 0 }, // left
+      { x: this.gridSize, y: -this.gridSize }, // up-right
+      { x: this.gridSize, y: this.gridSize }, // down-right
+      { x: -this.gridSize, y: this.gridSize }, // down-left
+      { x: -this.gridSize, y: -this.gridSize } // up-left
     ];
-    for (const dir of directions) {
+    for (let i = 0; i < directions.length; i++) {
+      const dir = directions[i];
       const newPos = { x: position.x + dir.x, y: position.y + dir.y };
       if (newPos.x >= 0 && newPos.x < this.mapWidth && newPos.y >= 0 && newPos.y < this.mapHeight) {
         if (mapType === 'city') {
@@ -77,7 +79,24 @@ export class PathfindingEngine {
             neighbors.push(newPos);
           }
         } else {
-          neighbors.push(newPos);
+          // Warehouse mode: block storage units with 5px gap
+          if (!isInAnyStorageUnit(newPos.x, newPos.y, 5)) {
+            // Check that the segment from position to newPos does not cross a storage unit
+            let crossesObstacle = false;
+            const steps = 10;
+            for (let s = 1; s <= steps; s++) {
+              const t = s / steps;
+              const x = position.x + (newPos.x - position.x) * t;
+              const y = position.y + (newPos.y - position.y) * t;
+              if (isInAnyStorageUnit(x, y, 5)) {
+                crossesObstacle = true;
+                break;
+              }
+            }
+            if (!crossesObstacle) {
+              neighbors.push(newPos);
+            }
+          }
         }
       }
     }
@@ -196,7 +215,7 @@ export class PathfindingEngine {
         if (path.length === 0 || this.getDistance(path[path.length - 1], goal) > 1) {
             path.push(goal);
         }
-        return this.smoothPath(path);
+        return this.smoothPath(path, mapType);
       }
       // Use mapType in getNeighbors, and allow escaping from building
       const fromInsideBuilding = mapType === 'city' && PathfindingEngine.isInAnyBuilding(currentNode.position.x, currentNode.position.y);
@@ -259,7 +278,7 @@ export class PathfindingEngine {
   }
 
   // Smooth the path to reduce unnecessary waypoints
-  private smoothPath(path: Position[]): Position[] {
+  private smoothPath(path: Position[], mapType: 'warehouse' | 'city' = 'warehouse'): Position[] {
     if (path.length <= 2) return path;
 
     const smoothed: Position[] = [path[0]];
@@ -267,51 +286,52 @@ export class PathfindingEngine {
 
     while (current < path.length - 1) {
       let farthest = current + 1;
-      
       // Find the farthest point we can reach in a straight line, but don't skip too many points at once
       for (let i = current + 2; i < path.length; i++) {
         // Only allow skipping up to 2 intermediate points for more detailed paths
         // And ensure we don't skip the very last point of the path
-        if (i - current > 3 || i === path.length - 1) break; 
+        if (i - current > 3 || i === path.length - 1) break;
 
-        if (this.hasLineOfSight(path[current], path[i])) {
+        if (this.hasLineOfSight(path[current], path[i], mapType)) {
           farthest = i;
         } else {
           break;
         }
       }
-      
       smoothed.push(path[farthest]);
       current = farthest;
     }
-
     // Ensure the last point in the smoothed path is the original last point (goal)
     if (smoothed[smoothed.length - 1] !== path[path.length - 1]) {
         smoothed.push(path[path.length - 1]);
     }
-
     return smoothed;
   }
 
   // Check if there's a clear line of sight between two points
-  private hasLineOfSight(pos1: Position, pos2: Position): boolean {
+  private hasLineOfSight(pos1: Position, pos2: Position, mapType: 'warehouse' | 'city' = 'warehouse'): boolean {
     const distance = this.getDistance(pos1, pos2);
     const steps = Math.ceil(distance / this.gridSize);
-    
     for (let i = 1; i < steps; i++) {
       const t = i / steps;
       const checkPos = {
         x: pos1.x + (pos2.x - pos1.x) * t,
         y: pos1.y + (pos2.y - pos1.y) * t
       };
-      
       // Check if position is within map bounds
-      if (checkPos.x < 0 || checkPos.x >= this.mapWidth ||
-          checkPos.y < 0 || checkPos.y >= this.mapHeight) {
+      if (checkPos.x < 0 || checkPos.x >= this.mapWidth || checkPos.y < 0 || checkPos.y >= this.mapHeight) {
         return false;
       }
+      if (mapType === 'city') {
+        if (PathfindingEngine.isInAnyBuilding(checkPos.x, checkPos.y, 5)) {
+          return false;
+        }
+      } else if (mapType === 'warehouse') {
+        if (isInAnyStorageUnit(checkPos.x, checkPos.y, 5)) {
+          return false;
+        }
+      }
     }
-    
     return true;
   }
 
@@ -389,4 +409,19 @@ export class PathfindingEngine {
 
     return this.createDirectPath(start, goal);
   }
+}
+
+// Helper: check if a point is inside or within 'gap' px of any warehouse storage unit
+export function isInAnyStorageUnit(x: number, y: number, gap: number = 5): boolean {
+  for (const unit of warehouseStorageUnits) {
+    if (
+      x >= unit.x - gap &&
+      x <= unit.x + unit.width + gap &&
+      y >= unit.y - gap &&
+      y <= unit.y + unit.height + gap
+    ) {
+      return true;
+    }
+  }
+  return false;
 }

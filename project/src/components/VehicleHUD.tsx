@@ -71,18 +71,21 @@ export const VehicleHUD: React.FC<VehicleHUDProps> = ({ vehicle, currentPosition
           {(vehicle.lastDecision.includes('pedestrian') || 
             vehicle.lastDecision.includes('PEDESTRIAN_STOP') || 
             vehicle.lastDecision.includes('PEDESTRIAN_SLOW') ||
+            vehicle.lastDecision.includes('PEDESTRIAN_DETECTED') ||
             vehicle.lastDecision.includes('Stopped for pedestrian') ||
             vehicle.lastDecision.includes('PEDESTRIAN_BLOCKING_REROUTE')) && (
             <div className="flex items-center gap-1 text-red-400">
               <Icons.User className="w-3 h-3" />
               <span className="font-semibold">
                 {vehicle.lastDecision.includes('Stopped for pedestrian') || vehicle.lastDecision.includes('PEDESTRIAN_STOP')
-                  ? 'Stopped: Pedestrian in path' 
+                  ? 'Stopped: Pedestrian very close' 
                   : vehicle.lastDecision.includes('PEDESTRIAN_SLOW')
                     ? 'Slowing down: Pedestrian ahead'
-                    : vehicle.lastDecision.includes('PEDESTRIAN_BLOCKING_REROUTE')
-                      ? 'Multiple pedestrians ahead'
-                      : 'Pedestrian detected ahead'}
+                    : vehicle.lastDecision.includes('PEDESTRIAN_DETECTED')
+                      ? 'Pedestrian detected (far)'
+                      : vehicle.lastDecision.includes('PEDESTRIAN_BLOCKING_REROUTE')
+                        ? 'Multiple pedestrians ahead'
+                        : 'Pedestrian detected ahead'}
               </span>
             </div>
           )}
@@ -137,6 +140,13 @@ export const VehicleHUD: React.FC<VehicleHUDProps> = ({ vehicle, currentPosition
             <div className="flex items-center gap-1 text-green-400">
               <Icons.CheckCircle className="w-3 h-3" />
               <span className="font-semibold">Destination Reached</span>
+            </div>
+          )}
+
+          {vehicle.lowBatteryMode && (
+            <div className="flex items-center gap-1 text-red-500">
+              <Icons.Battery className="w-3 h-3" />
+              <span className="font-semibold">Low battery mode</span>
             </div>
           )}
         </div>

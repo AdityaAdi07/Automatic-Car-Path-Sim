@@ -23,6 +23,7 @@ export interface Vehicle {
   isMoving: boolean;
   lastDecision: string;
   totalDistance: number;
+  lowBatteryMode?: boolean;
 }
 
 export interface TrafficCondition {
